@@ -10,22 +10,6 @@ An AI-powered application to help you find and track internship opportunities.
 - Easy to use search and filtering
 - Automatic tracking of application status
 
-## Setup
-
-1. Install Python 3.8 or higher
-2. Install required packages:
-   ```
-   pip install -r requirements.txt
-   ```
-3. Create a `.env` file in the project root with your OpenAI API key:
-   ```
-   OPENAI_API_KEY=your_api_key_here
-   ```
-4. Run the application:
-   ```
-   python internship_agent.py
-   ```
-
 ## Usage
 
 1. Enter your search query (e.g., "software engineering internships summer 2025")
