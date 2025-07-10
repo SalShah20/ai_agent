@@ -123,6 +123,9 @@ class NewGradJobAgent:
                 "- industry: Startup's industry focus\n"
                 "- stage: Startup's current stage (e.g., seed, series A, etc.)\n"
                 "- location: Startup's location\n"
+                "- contact_name: Name of the Head of Engineering/CTO/CEO\n"
+                "- contact_email: Email address if available\n"
+                "- contact_linkedin: LinkedIn profile URL if available\n"
                 "Return as a JSON array of these objects. Format the response exactly like this:\n"
                 "[\n"
                 "    {\n"
@@ -130,7 +133,10 @@ class NewGradJobAgent:
                 "        \"website\": \"https://startup.com\",\n"
                 "        \"industry\": \"Tech\",\n"
                 "        \"stage\": \"seed\",\n"
-                "        \"location\": \"San Francisco\"\n"
+                "        \"location\": \"San Francisco\",\n"
+                "        \"contact_name\": \"John Doe\",\n"
+                "        \"contact_email\": \"john.doe@startup.com\",\n"
+                "        \"contact_linkedin\": \"https://linkedin.com/in/johndoe\"\n"
                 "    }\n"
                 "]\n"
             )
@@ -188,11 +194,24 @@ class NewGradJobAgent:
         if not all(self.user_info.values()):
             raise ValueError("Please fill in all your profile information first")
 
+        # Determine the contact person based on available information
+        contact_name = startup_info.get('contact_name', 'Hiring Manager')
+        contact_email = startup_info.get('contact_email', '')
+        contact_linkedin = startup_info.get('contact_linkedin', '')
+
+        # Choose appropriate salutation based on available contact info
+        if contact_name.lower() != 'hiring manager':
+            salutation = f"Dear {contact_name},"
+        else:
+            salutation = "Dear Hiring Team,"
+
         prompt = (
             "Write a professional cold email for a new grad entry-level position. Include these details:\n"
             f"Startup: {startup_info['name']}\n"
             f"Industry: {startup_info.get('industry', 'Tech')}\n"
             f"Location: {startup_info.get('location', 'Remote')}\n"
+            f"Contact Person: {contact_name}\n"
+            f"Contact Email: {contact_email}\n"
             "\n"
             "The email should be personalized and include:\n"
             "1. A brief introduction as a recent graduate\n"
@@ -201,7 +220,7 @@ class NewGradJobAgent:
             "4. How you can contribute to their early-stage company\n"
             "5. A professional closing\n"
             "\n"
-            f"Use this information about the candidate:\n"
+            "Use this information about the candidate:\n"
             f"Name: {self.user_info['name']}\n"
             f"Degree: {self.user_info['degree']}\n"
             f"Graduation Year: {self.user_info['graduation_year']}\n"
@@ -219,7 +238,17 @@ class NewGradJobAgent:
             max_tokens=500
         )
         
-        return response.choices[0].message.content
+        email_content = response.choices[0].message.content
+        
+        # Add contact information at the end of the email
+        email_footer = f"\n\nContact Information:\n"\
+                     f"Startup: {startup_info['name']}\n"\
+                     f"Website: {startup_info['website']}\n"\
+                     f"Contact Person: {contact_name}\n"\
+                     f"Contact Email: {contact_email}\n"\
+                     f"LinkedIn: {contact_linkedin}"
+        
+        return salutation + "\n\n" + email_content + "\n\n" + email_footer
 
     def search_startups_and_generate_emails(self):
         """
