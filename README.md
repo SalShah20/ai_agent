@@ -9,7 +9,12 @@ This tool helps you find and apply for entry-level positions at startups by gene
 pip install -r requirements.txt
 ```
 
-2. Create a `.env` file in the project directory and add your OpenAI API key:
+2. Download ChromeDriver:
+   - Go to https://sites.google.com/a/chromium.org/chromedriver/downloads
+   - Download the version that matches your Chrome browser
+   - Extract `chromedriver.exe` and place it in the same directory as your Python script
+
+3. Create a `.env` file in the project directory and add your OpenAI API key:
 ```
 OPENAI_API_KEY=your_api_key_here
 ```
@@ -80,5 +85,7 @@ OPENAI_API_KEY=your_api_key_here
 
 - Python 3.8+
 - OpenAI API key
+- Selenium
+- ChromeDriver
 - Internet connection
 - Excel (for tracking applications)

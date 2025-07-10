@@ -1,19 +1,18 @@
 import os
 import openai
-import pandas as pd
 from dotenv import load_dotenv
 from datetime import datetime
 import tkinter as tk
 from tkinter import ttk, messagebox
 import requests
 from typing import List, Dict
+import json
 
 class NewGradJobAgent:
     def __init__(self):
         load_dotenv()
         openai.api_key = os.getenv('OPENAI_API_KEY')
-        self.tracking_file = 'new_grad_jobs.xlsx'
-        self.initialize_tracking_file()
+        self.setup_gui()
         self.user_info = {
             'name': '',
             'degree': '',
@@ -22,12 +21,6 @@ class NewGradJobAgent:
             'achievements': '',
             'location': ''
         }
-        self.setup_gui()
-
-    def initialize_tracking_file(self):
-        if not os.path.exists(self.tracking_file):
-            df = pd.DataFrame(columns=['Company', 'Position', 'Location', 'Application Deadline', 'Status', 'Link'])
-            df.to_excel(self.tracking_file, index=False)
 
     def setup_gui(self):
         self.window = tk.Tk()
@@ -96,33 +89,50 @@ class NewGradJobAgent:
 
     def save_user_info(self):
         """Save user information from the GUI entries"""
-        self.user_info['name'] = self.name_entry.get()
-        self.user_info['degree'] = self.degree_entry.get()
-        self.user_info['graduation_year'] = self.grad_year_entry.get()
-        self.user_info['skills'] = self.skills_entry.get()
-        self.user_info['achievements'] = self.achievements_entry.get()
-        self.user_info['location'] = self.location_entry.get()
+        self.user_info = {
+            'name': self.name_entry.get(),
+            'degree': self.degree_entry.get(),
+            'graduation_year': self.grad_year_entry.get(),
+            'skills': self.skills_entry.get(),
+            'achievements': self.achievements_entry.get(),
+            'location': self.location_entry.get()
+        }
         self.status_label.config(text="Profile saved successfully!")
 
     def scrape_vc_startups(self, vc_website: str) -> List[Dict]:
         """
-        Scrape startup information from a VC website.
+        Scrape startup information from a VC website using requests.
         Returns a list of dictionaries containing startup details.
         """
         try:
-            response = requests.get(vc_website)
+            response = requests.get(vc_website, timeout=10)
             response.raise_for_status()
             
+            # Get the content of the page
+            html_content = response.text
+            
+            # Use OpenAI to extract startup information
             prompt = (
-                f"Analyze this VC website content and extract startup information:\n\n"
-                f"{response.text[:5000]}...\n\n"
-                "Extract startups that might be interested in entry-level positions for new graduates. For each startup, return a JSON object with:\n"
+                "Analyze this VC website content and extract startup information:\n\n"
+                f"{html_content[:5000]}...\n\n"
+                "Extract startups that might be interested in entry-level positions for new graduates. "
+                "Focus on startups that are actively hiring and have a strong engineering or technical focus. "
+                "For each startup, return a JSON object with:\n"
                 "- name: Startup name\n"
                 "- website: Startup's website URL\n"
                 "- industry: Startup's industry focus\n"
                 "- stage: Startup's current stage (e.g., seed, series A, etc.)\n"
                 "- location: Startup's location\n"
-                "Return as a JSON array of these objects."
+                "Return as a JSON array of these objects. Format the response exactly like this:\n"
+                "[\n"
+                "    {\n"
+                "        \"name\": \"Startup Name\",\n"
+                "        \"website\": \"https://startup.com\",\n"
+                "        \"industry\": \"Tech\",\n"
+                "        \"stage\": \"seed\",\n"
+                "        \"location\": \"San Francisco\"\n"
+                "    }\n"
+                "]\n"
             )
             
             response = openai.chat.completions.create(
@@ -133,8 +143,40 @@ class NewGradJobAgent:
             )
             
             content = response.choices[0].message.content
-            startups = eval(content)  # Parse the JSON response
-            return startups
+            print(f"Received response: {content}")  # Debug print
+            
+            # Clean the response by removing any extra text
+            cleaned_content = content.strip()
+            if not cleaned_content.startswith('['):
+                cleaned_content = '[' + cleaned_content
+            if not cleaned_content.endswith(']'):
+                cleaned_content = cleaned_content + ']'
+            
+            try:
+                # Try to parse as JSON
+                startups = json.loads(cleaned_content)
+                print(f"Successfully parsed {len(startups)} startups")  # Debug print
+                return startups
+            except json.JSONDecodeError as e:
+                print(f"JSON parsing failed: {str(e)}")
+                print("Trying to clean the response...")
+                
+                # Try to find the JSON array in the response
+                start_idx = cleaned_content.find('[')
+                end_idx = cleaned_content.rfind(']')
+                if start_idx != -1 and end_idx != -1:
+                    json_array = cleaned_content[start_idx:end_idx+1]
+                    try:
+                        startups = json.loads(json_array)
+                        print(f"Successfully parsed {len(startups)} startups after cleaning")
+                        return startups
+                    except json.JSONDecodeError as e:
+                        print(f"Second JSON parsing attempt failed: {str(e)}")
+                        return []
+                else:
+                    print("Could not find JSON array in response")
+                    return []
+            
         except Exception as e:
             print(f"Error scraping VC website: {str(e)}")
             return []
