@@ -7,11 +7,22 @@ from tkinter import ttk, messagebox
 import requests
 from typing import List, Dict
 import json
+import base64
+from email.mime.text import MIMEText
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from google.auth.transport.requests import Request
+from googleapiclient.discovery import build
+import pickle
+
+# Gmail API scopes
+SCOPES = ['https://www.googleapis.com/auth/gmail.compose']
 
 class NewGradJobAgent:
     def __init__(self):
         load_dotenv()
         openai.api_key = os.getenv('OPENAI_API_KEY')
+        self.gmail_service = None
         self.setup_gui()
         self.user_info = {
             'name': '',
@@ -21,6 +32,52 @@ class NewGradJobAgent:
             'achievements': '',
             'location': ''
         }
+        self.generated_emails = []  # Store generated emails for draft creation
+
+    def authenticate_gmail(self):
+        """Authenticate with Gmail API"""
+        creds = None
+        # Token file stores user's access and refresh tokens
+        if os.path.exists('token.pickle'):
+            with open('token.pickle', 'rb') as token:
+                creds = pickle.load(token)
+        
+        # If no valid credentials, let user log in
+        if not creds or not creds.valid:
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+            else:
+                flow = InstalledAppFlow.from_client_secrets_file(
+                    'credentials.json', SCOPES)
+                creds = flow.run_local_server(port=0)
+            
+            # Save credentials for next run
+            with open('token.pickle', 'wb') as token:
+                pickle.dump(creds, token)
+        
+        self.gmail_service = build('gmail', 'v1', credentials=creds)
+        return True
+
+    def create_gmail_draft(self, to_email: str, subject: str, body: str):
+        """Create a draft email in Gmail"""
+        try:
+            message = MIMEText(body)
+            message['to'] = to_email
+            message['subject'] = subject
+            raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode('utf-8')
+            
+            draft = {
+                'message': {
+                    'raw': raw_message
+                }
+            }
+            
+            draft_result = self.gmail_service.users().drafts().create(
+                userId='me', body=draft).execute()
+            
+            return draft_result
+        except Exception as e:
+            raise Exception(f"Error creating draft: {str(e)}")
 
     def setup_gui(self):
         self.window = tk.Tk()
@@ -70,22 +127,86 @@ class NewGradJobAgent:
         ttk.Button(search_frame, text="Search and Generate Emails", 
                   command=self.search_startups_and_generate_emails).grid(row=0, column=2, padx=5, pady=2)
 
+        # Gmail Actions Frame
+        gmail_frame = ttk.LabelFrame(self.window, text="Gmail Actions", padding="5")
+        gmail_frame.grid(row=2, column=0, padx=10, pady=5, sticky="ew")
+
+        ttk.Button(gmail_frame, text="Authenticate Gmail", 
+                  command=self.handle_gmail_auth).grid(row=0, column=0, padx=5, pady=5)
+        
+        ttk.Button(gmail_frame, text="Create Gmail Drafts", 
+                  command=self.create_all_drafts).grid(row=0, column=1, padx=5, pady=5)
+        
+        self.gmail_status = ttk.Label(gmail_frame, text="Not authenticated")
+        self.gmail_status.grid(row=0, column=2, padx=5, pady=5)
+
         # Results Frame
         self.results_text = tk.Text(self.window, height=20, width=120)
-        self.results_text.grid(row=2, column=0, padx=10, pady=5, sticky="nsew")
+        self.results_text.grid(row=3, column=0, padx=10, pady=5, sticky="nsew")
         scrollbar = ttk.Scrollbar(self.window, command=self.results_text.yview)
-        scrollbar.grid(row=2, column=1, sticky="ns")
+        scrollbar.grid(row=3, column=1, sticky="ns")
         self.results_text.config(yscrollcommand=scrollbar.set)
 
         # Status Frame
         status_frame = ttk.LabelFrame(self.window, text="Status", padding="5")
-        status_frame.grid(row=3, column=0, padx=10, pady=5, sticky="ew")
+        status_frame.grid(row=4, column=0, padx=10, pady=5, sticky="ew")
         self.status_label = ttk.Label(status_frame, text="Ready")
         self.status_label.pack()
 
         # Configure grid weights
-        self.window.grid_rowconfigure(2, weight=1)
+        self.window.grid_rowconfigure(3, weight=1)
         self.window.grid_columnconfigure(0, weight=1)
+
+    def handle_gmail_auth(self):
+        """Handle Gmail authentication"""
+        try:
+            self.status_label.config(text="Authenticating with Gmail...")
+            self.window.update()
+            
+            if self.authenticate_gmail():
+                self.gmail_status.config(text="✓ Authenticated")
+                self.status_label.config(text="Gmail authentication successful!")
+                messagebox.showinfo("Success", "Gmail authentication successful!")
+            else:
+                self.gmail_status.config(text="✗ Not authenticated")
+                self.status_label.config(text="Gmail authentication failed")
+        except Exception as e:
+            messagebox.showerror("Error", f"Authentication failed: {str(e)}")
+            self.status_label.config(text="Authentication failed")
+
+    def create_all_drafts(self):
+        """Create Gmail drafts for all generated emails"""
+        if not self.gmail_service:
+            messagebox.showerror("Error", "Please authenticate with Gmail first")
+            return
+        
+        if not self.generated_emails:
+            messagebox.showerror("Error", "No emails to create drafts from. Please generate emails first.")
+            return
+        
+        try:
+            self.status_label.config(text="Creating Gmail drafts...")
+            self.window.update()
+            
+            draft_count = 0
+            for email_data in self.generated_emails:
+                try:
+                    draft = self.create_gmail_draft(
+                        to_email=email_data['to_email'],
+                        subject=email_data['subject'],
+                        body=email_data['body']
+                    )
+                    draft_count += 1
+                    self.results_text.insert(tk.END, f"\n✓ Created draft for {email_data['startup_name']}\n")
+                    self.window.update()
+                except Exception as e:
+                    self.results_text.insert(tk.END, f"\n✗ Failed to create draft for {email_data['startup_name']}: {str(e)}\n")
+            
+            self.status_label.config(text=f"Created {draft_count} Gmail drafts!")
+            messagebox.showinfo("Success", f"Created {draft_count} Gmail drafts! Check your Gmail drafts folder.")
+        except Exception as e:
+            messagebox.showerror("Error", f"Error creating drafts: {str(e)}")
+            self.status_label.config(text="Error creating drafts")
 
     def save_user_info(self):
         """Save user information from the GUI entries"""
@@ -149,7 +270,7 @@ class NewGradJobAgent:
             )
             
             content = response.choices[0].message.content
-            print(f"Received response: {content}")  # Debug print
+            print(f"Received response: {content}")
             
             # Clean the response by removing any extra text
             cleaned_content = content.strip()
@@ -159,15 +280,13 @@ class NewGradJobAgent:
                 cleaned_content = cleaned_content + ']'
             
             try:
-                # Try to parse as JSON
                 startups = json.loads(cleaned_content)
-                print(f"Successfully parsed {len(startups)} startups")  # Debug print
+                print(f"Successfully parsed {len(startups)} startups")
                 return startups
             except json.JSONDecodeError as e:
                 print(f"JSON parsing failed: {str(e)}")
                 print("Trying to clean the response...")
                 
-                # Try to find the JSON array in the response
                 start_idx = cleaned_content.find('[')
                 end_idx = cleaned_content.rfind(']')
                 if start_idx != -1 and end_idx != -1:
@@ -194,12 +313,10 @@ class NewGradJobAgent:
         if not all(self.user_info.values()):
             raise ValueError("Please fill in all your profile information first")
 
-        # Determine the contact person based on available information
         contact_name = startup_info.get('contact_name', 'Hiring Manager')
         contact_email = startup_info.get('contact_email', '')
         contact_linkedin = startup_info.get('contact_linkedin', '')
 
-        # Choose appropriate salutation based on available contact info
         if contact_name.lower() != 'hiring manager':
             salutation = f"Dear {contact_name},"
         else:
@@ -240,7 +357,6 @@ class NewGradJobAgent:
         
         email_content = response.choices[0].message.content
         
-        # Add contact information at the end of the email
         email_footer = f"\n\nContact Information:\n"\
                      f"Startup: {startup_info['name']}\n"\
                      f"Website: {startup_info['website']}\n"\
@@ -274,17 +390,36 @@ class NewGradJobAgent:
             self.results_text.delete(1.0, tk.END)
             self.results_text.insert(tk.END, f"Found {len(startups)} startups. Generating emails...\n\n")
 
+            self.generated_emails = []  # Clear previous emails
+
             for startup in startups:
                 try:
                     email = self.generate_cold_email(startup)
+                    
+                    # Store email data for draft creation
+                    contact_email = startup.get('contact_email', '')
+                    if not contact_email:
+                        contact_email = f"careers@{startup.get('website', 'example.com').replace('https://', '').replace('http://', '').split('/')[0]}"
+                    
+                    subject = f"New Graduate Interested in {startup['name']} - {self.user_info['degree']}"
+                    
+                    self.generated_emails.append({
+                        'startup_name': startup['name'],
+                        'to_email': contact_email,
+                        'subject': subject,
+                        'body': email
+                    })
+                    
                     self.results_text.insert(tk.END, f"\nEmail for {startup['name']}:\n")
+                    self.results_text.insert(tk.END, f"To: {contact_email}\n")
+                    self.results_text.insert(tk.END, f"Subject: {subject}\n")
                     self.results_text.insert(tk.END, "-" * 80 + "\n")
                     self.results_text.insert(tk.END, email + "\n")
                     self.results_text.insert(tk.END, "-" * 80 + "\n")
                 except Exception as e:
                     self.results_text.insert(tk.END, f"Error generating email for {startup['name']}: {str(e)}\n")
 
-            self.status_label.config(text="Email generation complete!")
+            self.status_label.config(text="Email generation complete! Now authenticate Gmail to create drafts.")
         except Exception as e:
             messagebox.showerror("Error", f"An error occurred: {str(e)}")
             self.status_label.config(text="Error occurred")
